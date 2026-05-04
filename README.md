@@ -14,21 +14,21 @@ A **production-grade, event-driven multi-asset algorithmic trading system** for 
 
 ```
 cpat/
-├── core/           Domain models (Bar, Signal, Order, Fill, Position) — frozen, typed
-├── config/         YAML-driven config with Pydantic v2 validation
+├── core/                Domain models (Bar, Signal, Order, Fill, Position) — frozen, typed
+├── config/              YAML-driven config with Pydantic v2 validation
 ├── data/
-│   ├── handler.py  Forward-only DataHandler (look-ahead bias prevention)
-│   ├── adapters/   Yahoo Finance + CSV adapters
-│   └── store.py    Parquet-backed local storage
-├── backtest/       Event-driven engine v2 (Market → Signal → Order → Fill)
-├── strategies/     Momentum (cross-sectional) + Mean Reversion (Bollinger + RSI)
+│   ├── handler.py       Forward-only DataHandler (look-ahead bias prevention)
+│   ├── adapters/        Yahoo Finance + CSV adapters
+│   └── store.py         Parquet-backed local storage
+├── backtest/            Event-driven engine v2 (Market → Signal → Order → Fill)
+├── strategies/          Momentum (cross-sectional) + Mean Reversion (Bollinger + RSI)
 ├── portfolio/
-│   ├── manager.py  PortfolioManager — cash, positions, equity, exposure
-│   └── translator.py  SignalOrderTranslator — signal → sized order
+│   ├── manager.py       PortfolioManager — cash, positions, equity, exposure
+│   └── translator.py    SignalOrderTranslator — signal → sized order
 ├── execution/
-│   └── engine.py   ExecutionEngine v2 — 3 slippage models, partial fills
+│   └── engine.py        ExecutionEngine v2 — 3 slippage models, partial fills
 ├── risk/
-│   └── engine.py   RiskEngine — 5 configurable pre-trade constraints
+│   └── engine.py        RiskEngine — 5 configurable pre-trade constraints
 ├── analytics/
 │   ├── performance.py   PerformanceTracker — 20 metrics (Sharpe, Sortino, Calmar…)
 │   ├── drawdown.py      DrawdownPeriod table, Ulcer Index  [Week 3]
@@ -40,7 +40,7 @@ cpat/
 │   ├── splitter.py      Forward-only train/test split + CV folds  [Week 3]
 │   ├── walk_forward.py  Rolling OOS walk-forward harness  [Week 3]
 │   └── overfitting.py   Parameter sensitivity + degradation report  [Week 3]
-└── infrastructure/ Structured logging (console + JSON)
+└── infrastructure/      Structured logging (console + JSON)
 ```
 
 **Event flow (per bar):**
