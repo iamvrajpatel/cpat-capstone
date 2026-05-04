@@ -1,0 +1,236 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CPAT Master Configuration — India Universe
+# All runtime parameters live here. No hardcoded values in source code.
+# Tickers: Yahoo Finance format (.NS suffix = NSE, ^ prefix = index, =F = futures)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── System ────────────────────────────────────────────────────────────────────
+system:
+  execution_mode: PAPER             # BACKTEST | PAPER | LIVE
+  log_level: INFO                   # DEBUG | INFO | WARNING | ERROR
+  log_format: json                  # json | console
+  random_seed: 42
+  timezone: Asia/Kolkata            # IST — Indian Standard Time
+
+# ── Backtest ──────────────────────────────────────────────────────────────────
+backtest:
+  start_date: "2019-01-01"
+  end_date: "2024-12-31"
+  initial_capital: 10_000_000.0    # INR — ₹1 Crore
+  benchmark_symbol: "^NSEI"        # Nifty 50 as benchmark
+  warmup_bars: 252                  # Bars before signals start
+  # NOTE: interval=1h → 252 bars ≈ ~6 weeks of hourly data (NSE: 6.25h/day)
+  #       Set warmup_bars: 1512 for a full year of hourly warmup
+
+# ── Universe ──────────────────────────────────────────────────────────────────
+universe:
+  interval: "1d"                    # Bar frequency: 1d | 1h | 15m
+  name: "india_diversified"         # NSE equities + Indian indices + global commodities
+
+  # ── Indian Broad Market Indices (Yahoo Finance: ^ prefix) ──────────────────
+  indices:
+    - "^NSEI"       # Nifty 50 — benchmark
+    - "^BSESN"      # BSE Sensex
+    - "^NSEBANK"    # Bank Nifty
+    - "^CNXIT"      # Nifty IT
+    - "^CNXAUTO"    # Nifty Auto
+    - "^CNXPHARMA"  # Nifty Pharma
+    - "^CNXFMCG"    # Nifty FMCG
+    - "^CNXMETAL"   # Nifty Metal
+    - "^CNXREALTY"  # Nifty Realty
+    - "^CNXINFRA"   # Nifty Infrastructure
+    - "^NSMIDCP"    # Nifty Midcap 50
+
+  # ── Global Commodities (Yahoo Finance: =F suffix = futures) ───────────────
+  etfs:
+    - "GC=F"   # Gold Futures (USD/oz)
+    - "SI=F"   # Silver Futures (USD/oz)
+    - "CL=F"   # Crude Oil WTI Futures (USD/bbl)
+    - "BZ=F"   # Brent Crude Futures (USD/bbl)
+    - "NG=F"   # Natural Gas Futures
+    - "HG=F"   # Copper Futures
+    - "ZW=F"   # Wheat Futures
+    - "ZC=F"   # Corn Futures
+    - "ZS=F"   # Soybean Futures
+
+  # ── NSE Large-Cap Equities — Sector-Wise (Yahoo Finance: .NS suffix) ───────
+  equities:
+
+    # ── Information Technology ────────────────────────────────────────────────
+    - TCS.NS          # Tata Consultancy Services
+    - INFY.NS         # Infosys
+    - WIPRO.NS        # Wipro
+    - HCLTECH.NS      # HCL Technologies
+    - TECHM.NS        # Tech Mahindra
+    - LTIM.NS         # LTIMindtree
+    - PERSISTENT.NS   # Persistent Systems
+    - MPHASIS.NS      # Mphasis
+
+    # ── Banking & Financial Services ──────────────────────────────────────────
+    - HDFCBANK.NS     # HDFC Bank
+    - ICICIBANK.NS    # ICICI Bank
+    - KOTAKBANK.NS    # Kotak Mahindra Bank
+    - SBIN.NS         # State Bank of India
+    - AXISBANK.NS     # Axis Bank
+    - BAJFINANCE.NS   # Bajaj Finance
+    - BAJAJFINSV.NS   # Bajaj Finserv
+    - INDUSINDBK.NS   # IndusInd Bank
+    - SHRIRAMFIN.NS   # Shriram Finance
+    - HDFCLIFE.NS     # HDFC Life Insurance
+
+    # ── Energy & Oil ──────────────────────────────────────────────────────────
+    - RELIANCE.NS     # Reliance Industries (largest by market cap)
+    - ONGC.NS         # Oil & Natural Gas Corporation
+    - BPCL.NS         # Bharat Petroleum
+    - IOC.NS          # Indian Oil Corporation
+    - GAIL.NS         # GAIL India
+    - ADANIGREEN.NS   # Adani Green Energy
+    - ADANIPOWER.NS   # Adani Power
+    - TATAPOWER.NS    # Tata Power
+
+    # ── Power & Utilities ─────────────────────────────────────────────────────
+    - NTPC.NS         # NTPC (National Thermal Power)
+    - POWERGRID.NS    # Power Grid Corporation
+
+    # ── Healthcare & Pharmaceuticals ──────────────────────────────────────────
+    - SUNPHARMA.NS    # Sun Pharmaceutical
+    - DRREDDY.NS      # Dr. Reddy's Laboratories
+    - CIPLA.NS        # Cipla
+    - DIVISLAB.NS     # Divi's Laboratories
+    - APOLLOHOSP.NS   # Apollo Hospitals
+    - AUROPHARMA.NS   # Aurobindo Pharma
+    - TORNTPHARM.NS   # Torrent Pharmaceuticals
+
+    # ── FMCG / Consumer Staples ───────────────────────────────────────────────
+    - HINDUNILVR.NS   # Hindustan Unilever (HUL)
+    - ITC.NS          # ITC Limited
+    - NESTLEIND.NS    # Nestlé India
+    - BRITANNIA.NS    # Britannia Industries
+    - DABUR.NS        # Dabur India
+    - MARICO.NS       # Marico
+    - COLPAL.NS       # Colgate-Palmolive India
+    - GODREJCP.NS     # Godrej Consumer Products
+
+    # ── Automobiles & Auto Components ─────────────────────────────────────────
+    - MARUTI.NS       # Maruti Suzuki
+    - TATAMOTORS.NS   # Tata Motors
+    - "M&M.NS"        # Mahindra & Mahindra (quoted: ampersand in ticker)
+    - BAJAJ-AUTO.NS   # Bajaj Auto
+    - EICHERMOT.NS    # Eicher Motors (Royal Enfield)
+    - HEROMOTOCO.NS   # Hero MotoCorp
+    - TVSMOTOR.NS     # TVS Motor Company
+
+    # ── Metals & Mining ───────────────────────────────────────────────────────
+    - TATASTEEL.NS    # Tata Steel
+    - JSWSTEEL.NS     # JSW Steel
+    - HINDALCO.NS     # Hindalco Industries
+    - VEDL.NS         # Vedanta
+    - COALINDIA.NS    # Coal India
+    - NMDC.NS         # NMDC (iron ore)
+    - SAIL.NS         # Steel Authority of India
+
+    # ── Infrastructure & Real Estate ──────────────────────────────────────────
+    - LT.NS           # Larsen & Toubro
+    - ADANIPORTS.NS   # Adani Ports & SEZ
+    - DLF.NS          # DLF (real estate)
+    - ULTRACEMCO.NS   # UltraTech Cement
+    - GRASIM.NS       # Grasim Industries
+    - AMBUJACEM.NS    # Ambuja Cements
+    - OBEROIRLTY.NS   # Oberoi Realty
+
+    # ── Consumer Discretionary ────────────────────────────────────────────────
+    - TITAN.NS        # Titan Company (watches, jewellery)
+    - DMART.NS        # Avenue Supermarts (DMart)
+    - ASIANPAINT.NS   # Asian Paints
+    - BERGEPAINT.NS   # Berger Paints
+
+    # ── Telecom ───────────────────────────────────────────────────────────────
+    - BHARTIARTL.NS   # Bharti Airtel
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  provider: yahoo              # yahoo | csv | polygon (future)
+  store_type: parquet
+  raw_data_path: "data/raw"
+  processed_data_path: "data/processed"
+  cache_path: "data/cache"
+  download_retry_limit: 3
+  download_retry_delay_seconds: 5
+  max_missing_bar_pct: 0.02    # 2% missing bar tolerance
+
+# ── Transaction Costs (Indian brokers — NSE) ──────────────────────────────────
+# Reference: Zerodha/Upstox model — flat ₹20 or 0.03% intraday, 0.1% delivery
+costs:
+  commission:
+    model: PERCENTAGE           # ZERO | PER_SHARE | PERCENTAGE
+    value: 0.0003               # 3 bps — competitive Indian broker rate
+    min_commission: 20.0        # ₹20 minimum per order (Zerodha model)
+  slippage:
+    model: SPREAD_BASED         # More realistic for NSE mid/large-caps
+    slippage_model_name: SPREAD_BASED
+    bps: 8.0                    # Fallback fixed bps (NSE slightly wider than US)
+
+# ── Strategies ────────────────────────────────────────────────────────────────
+strategies:
+  momentum:
+    enabled: true
+    lookback_short: 21          # 1-month return (trading days)
+    lookback_long: 252          # 12-month return (1-year)
+    skip_most_recent: 21        # Skip last month (Jegadeesh & Titman)
+    rebalance_frequency: 21     # Days between rebalances
+    top_n_pct: 0.2              # Top 20% of universe = long
+    bottom_n_pct: 0.2           # Bottom 20% = short (if short selling allowed)
+    allow_short: false          # F&O short only — disabled for cash segment
+
+  mean_reversion:
+    enabled: true
+    lookback_window: 20         # Rolling window for z-score computation
+    entry_zscore: 2.0           # Enter when |z| > 2
+    exit_zscore: 0.5            # Exit when |z| < 0.5
+    rsi_period: 14              # RSI confirmation period
+    rsi_oversold: 30
+    rsi_overbought: 70
+    allow_short: false
+
+# ── Risk ──────────────────────────────────────────────────────────────────────
+risk:
+  max_position_pct: 0.04        # Max 4% per position (tighter than global — NSE liquidity)
+  max_sector_pct: 0.25          # Max 25% per sector
+  max_gross_exposure_pct: 1.0   # Long-only (no leverage in cash segment)
+  max_drawdown_pct: 0.12        # 12% drawdown halt (Indian markets more volatile)
+  min_cash_pct: 0.05            # 5% cash buffer (STT + settlement costs)
+  target_position_weight: 0.02  # 2% of equity per new position
+  risk_free_rate: 0.065         # 6.5% — RBI repo rate approximation
+  position_sizing: equal_weight # equal_weight | inverse_volatility | kelly
+
+# ── Broker (Paper / Live) ─────────────────────────────────────────────────────
+broker:
+  provider: alpaca              # alpaca | ibkr (future) | zerodha (Week 4)
+  paper_trading: true
+  # Credentials loaded from environment variables, NOT from this file:
+  # ALPACA_API_KEY, ALPACA_SECRET_KEY
+  # Future: KITE_API_KEY, KITE_SECRET (Zerodha Kite Connect)
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  log_dir: "logs"
+  max_bytes: 10_485_760         # 10 MB per file
+  backup_count: 5
+
+# ── Optimization (Week 3) ─────────────────────────────────────────────────────
+# Grid/random search runs on train split ONLY. Test split is never touched.
+optimization:
+  method: random              # grid | random
+  n_trials: 50                # random search trials (ignored for grid)
+  metric: sharpe_ratio        # PerformanceReport field to maximise
+  train_ratio: 0.70           # 70% train / 30% test
+  random_seed: 42
+
+# ── Validation (Week 3) ───────────────────────────────────────────────────────
+# Walk-forward settings. Daily bars assumed (252 bars ≈ 1 year).
+validation:
+  walk_forward_train_bars: 756   # 3-year expanding train window
+  walk_forward_test_bars: 252    # 1-year OOS test window
+  walk_forward_step_bars: 63     # Quarterly step
+  optimize_on_fold: false        # Set true to re-optimize each fold (slow)
+  n_opt_trials: 20               # Trials per fold when optimize_on_fold=true

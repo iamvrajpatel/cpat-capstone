@@ -1,0 +1,1 @@
+"""CPAT scripts package."""
