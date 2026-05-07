@@ -83,7 +83,7 @@ def _print_full_report(result) -> None:
 def _run_backtest(bar_data: dict, cfg, strategy: str) -> None:
     """Run a standard full-period backtest."""
     click.echo(f"\nRunning backtest [{cfg.backtest.start_date} → {cfg.backtest.end_date}]...")
-    engine = BacktestEngine.from_config(cfg)
+    engine = BacktestEngine.from_config(cfg, managed_risk=True)
     _register_strategies(engine, strategy, bar_data, cfg)
     result = engine.run(bar_data)
     _print_full_report(result)
@@ -93,7 +93,54 @@ def _run_backtest(bar_data: dict, cfg, strategy: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     equity_path = output_dir / f"equity_curve_{strategy}.csv"
     result.equity_curve.to_csv(equity_path)
+    result.portfolio_snapshots_df.to_csv(output_dir / f"portfolio_snapshots_{strategy}.csv")
+    result.risk_history_df.to_csv(output_dir / f"risk_history_{strategy}.csv")
+    result.trade_risk_df.to_csv(output_dir / f"trade_risk_{strategy}.csv")
     click.echo(f"\nEquity curve saved → {equity_path}")
+
+
+def _result_summary(label: str, result) -> dict[str, float | int | str]:
+    return {
+        "mode": label,
+        "final_equity": round(result.final_equity, 2),
+        "total_return": round(result.report.total_return, 6),
+        "sharpe": round(result.report.sharpe_ratio, 4),
+        "max_drawdown": round(result.report.max_drawdown, 6),
+        "ulcer_index": round(result.report.ulcer_index, 4),
+        "risk_rejects": int(result.stats.get("risk_rejects", 0)),
+        "stop_triggers": int(result.stats.get("stop_triggers", 0)),
+        "max_gross_exposure": round(float(result.stats.get("max_gross_exposure", 0.0)), 2),
+    }
+
+
+def _run_compare(bar_data: dict, cfg, strategy: str) -> None:
+    """Run baseline vs managed backtests and compare results."""
+    click.echo(f"\nRunning baseline vs managed comparison [{cfg.backtest.start_date} → {cfg.backtest.end_date}]...")
+
+    baseline_engine = BacktestEngine.from_config(cfg, managed_risk=False)
+    _register_strategies(baseline_engine, strategy, bar_data, cfg)
+    baseline = baseline_engine.run(bar_data)
+
+    managed_engine = BacktestEngine.from_config(cfg, managed_risk=True)
+    _register_strategies(managed_engine, strategy, bar_data, cfg)
+    managed = managed_engine.run(bar_data)
+
+    comparison = pd.DataFrame([
+        _result_summary("baseline", baseline),
+        _result_summary("managed", managed),
+    ])
+    click.echo("\n── Baseline vs Managed Comparison ───────────────────────────────")
+    click.echo(comparison.to_string(index=False))
+
+    output_dir = Path("data/results")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    comparison_path = output_dir / f"comparison_{strategy}.csv"
+    comparison.to_csv(comparison_path, index=False)
+    baseline.equity_curve.to_csv(output_dir / f"equity_curve_{strategy}_baseline.csv")
+    managed.equity_curve.to_csv(output_dir / f"equity_curve_{strategy}_managed.csv")
+    managed.risk_history_df.to_csv(output_dir / f"risk_history_{strategy}_managed.csv")
+    managed.trade_risk_df.to_csv(output_dir / f"trade_risk_{strategy}_managed.csv")
+    click.echo(f"\nComparison saved → {comparison_path}")
 
 
 # ── Optimization ───────────────────────────────────────────────────────────────
@@ -224,7 +271,7 @@ def _run_walk_forward(bar_data: dict, cfg, strategy: str) -> None:
 )
 @click.option(
     "--mode", default="backtest",
-    type=click.Choice(["backtest", "optimize", "walk-forward"]),
+    type=click.Choice(["backtest", "optimize", "walk-forward", "compare"]),
     help="Execution mode",
 )
 @click.option("--log-level", default="INFO", help="Log level")
@@ -251,6 +298,8 @@ def main(config: str, strategy: str, mode: str, log_level: str) -> None:
 
     if mode == "backtest":
         _run_backtest(bar_data, cfg, strategy)
+    elif mode == "compare":
+        _run_compare(bar_data, cfg, strategy)
     elif mode == "optimize":
         _run_optimize(bar_data, cfg, strategy)
     elif mode == "walk-forward":

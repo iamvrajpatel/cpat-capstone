@@ -59,8 +59,11 @@ class PortfolioSnapshot:
     total_equity: float
     gross_exposure: float
     net_exposure: float
+    long_exposure: float
+    short_exposure: float
     n_longs: int
     n_shorts: int
+    n_open_positions: int
     realised_pnl: float
 
 
@@ -264,9 +267,20 @@ class PortfolioManager:
         equity = self._cash + pos_value
         gross = self.gross_exposure(current_prices)
         net = self.net_exposure(current_prices)
+        long_exposure = sum(
+            pos.market_value(current_prices[sym])
+            for sym, pos in self._positions.items()
+            if pos.is_long and sym in current_prices and current_prices[sym] > 0
+        )
+        short_exposure = sum(
+            abs(pos.market_value(current_prices[sym]))
+            for sym, pos in self._positions.items()
+            if pos.is_short and sym in current_prices and current_prices[sym] > 0
+        )
 
         n_longs = sum(1 for p in self._positions.values() if p.is_long)
         n_shorts = sum(1 for p in self._positions.values() if p.is_short)
+        n_open_positions = sum(1 for p in self._positions.values() if not p.is_flat)
         realised = sum(p.realised_pnl for p in self._positions.values())
 
         snap = PortfolioSnapshot(
@@ -276,8 +290,11 @@ class PortfolioManager:
             total_equity=equity,
             gross_exposure=gross,
             net_exposure=net,
+            long_exposure=long_exposure,
+            short_exposure=short_exposure,
             n_longs=n_longs,
             n_shorts=n_shorts,
+            n_open_positions=n_open_positions,
             realised_pnl=realised,
         )
         self._snapshots.append(snap)
@@ -322,8 +339,11 @@ class PortfolioManager:
                 "total_equity": s.total_equity,
                 "gross_exposure": s.gross_exposure,
                 "net_exposure": s.net_exposure,
+                "long_exposure": s.long_exposure,
+                "short_exposure": s.short_exposure,
                 "n_longs": s.n_longs,
                 "n_shorts": s.n_shorts,
+                "n_open_positions": s.n_open_positions,
                 "realised_pnl": s.realised_pnl,
             }
             for s in self._snapshots

@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 from datetime import date
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -186,9 +186,10 @@ class RiskConfig(BaseModel):
     max_gross_exposure_pct: Annotated[float, Field(gt=0, le=3.0)] = 1.0
     max_drawdown_pct: Annotated[float, Field(gt=0, le=1)] = 0.15
     min_cash_pct: Annotated[float, Field(ge=0, le=0.5)] = 0.03
-    target_position_weight: Annotated[float, Field(gt=0, le=0.5)] = 0.02
     risk_free_rate: Annotated[float, Field(ge=0, le=0.2)] = 0.04
-    position_sizing: Literal["equal_weight", "inverse_volatility", "kelly"] = "equal_weight"
+    allocation_method: Literal["equal_weight", "volatility_adjusted"] = "equal_weight"
+    max_open_positions: Annotated[int, Field(ge=1)] = 20
+    max_daily_loss_pct: Annotated[float, Field(gt=0, le=0.5)] = 0.02
 
 
 class BrokerConfig(BaseModel):
@@ -226,6 +227,26 @@ class ValidationConfig(BaseModel):
     n_opt_trials: Annotated[int, Field(ge=1)] = 20
 
 
+class PositionSizingConfig(BaseModel):
+    """Position sizing configuration (Week 4)."""
+
+    method: Literal["fixed_fractional", "inverse_volatility", "kelly"] = "inverse_volatility"
+    stop_method: Literal["atr", "fixed_pct"] = "atr"
+    risk_per_trade_pct: Annotated[float, Field(gt=0, le=0.1)] = 0.01   # 1% equity at risk
+    fixed_stop_pct: Annotated[float, Field(gt=0, le=0.5)] = 0.02
+    atr_period: Annotated[int, Field(ge=5, le=100)] = 14
+    atr_multiplier: Annotated[float, Field(gt=0, le=10)] = 2.0         # stop = 2×ATR
+    take_profit_mult: Optional[float] = 3.0                            # TP = entry + 3×ATR
+    trailing_stop: bool = False
+    vol_window: Annotated[int, Field(ge=5, le=252)] = 20
+    min_trade_value: Annotated[float, Field(ge=0)] = 5_000.0
+    # Kelly-specific
+    kelly_win_rate: Annotated[float, Field(gt=0, lt=1)] = 0.55
+    kelly_avg_win: Annotated[float, Field(gt=0)] = 1.5
+    kelly_avg_loss: Annotated[float, Field(gt=0)] = 1.0
+    kelly_max_fraction: Annotated[float, Field(gt=0, le=0.5)] = 0.25
+
+
 # ── Root Config ────────────────────────────────────────────────────────────────
 
 
@@ -255,6 +276,7 @@ class CPATConfig(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     optimization: OptimizationConfig = Field(default_factory=OptimizationConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
+    position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
 
 
 # ── Loader ─────────────────────────────────────────────────────────────────────

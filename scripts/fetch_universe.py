@@ -49,6 +49,8 @@ def main(config: str, start: str | None, end: str | None, force: bool, log_level
     pipeline = DataPipeline.from_config(cfg)
     result = pipeline.run(start=start_date, end=end_date, force_refresh=force)
 
+    print("---> ", result)
+
     click.echo(f"\n{'='*60}")
     click.echo(f"  Universe: {cfg.universe.name}")
     click.echo(f"  Symbols:  {result.total_symbols}")

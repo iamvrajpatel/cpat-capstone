@@ -187,6 +187,62 @@ class TestSimulatedExecutionEngine:
 # ── BacktestEngine tests ───────────────────────────────────────────────────────
 
 class TestBacktestEngine:
+    def test_warmup_builds_history_without_submitting_orders(self, minimal_config):
+        minimal_config.backtest.__dict__["warmup_bars"] = 5
+
+        class AlwaysSignal:
+            def __init__(self, event_queue):
+                self._event_queue = event_queue
+                self.market_calls = 0
+
+            def on_market(self, event):
+                self.market_calls += 1
+                sig = Signal(
+                    strategy_id="warmup_probe",
+                    symbol="AAPL",
+                    direction=SignalDirection.LONG,
+                    timestamp=event.timestamp,
+                    strength=1.0,
+                )
+                self._event_queue.put(SignalEvent.from_signal(sig))
+
+        engine = BacktestEngine.from_config(minimal_config, managed_risk=False)
+        handler = AlwaysSignal(engine.event_queue)
+        engine.register_market_handler(handler)
+
+        result = engine.run({"AAPL": _make_df(n=4)})
+
+        assert handler.market_calls == 4
+        assert result.stats["signal_count"] == 4
+        assert result.stats["warmup_signal_count"] == 4
+        assert result.stats["order_count"] == 0
+
+    def test_first_post_warmup_signal_can_submit_order(self, minimal_config):
+        minimal_config.backtest.__dict__["warmup_bars"] = 5
+
+        class AlwaysSignal:
+            def __init__(self, event_queue):
+                self._event_queue = event_queue
+
+            def on_market(self, event):
+                sig = Signal(
+                    strategy_id="warmup_probe",
+                    symbol="AAPL",
+                    direction=SignalDirection.LONG,
+                    timestamp=event.timestamp,
+                    strength=1.0,
+                )
+                self._event_queue.put(SignalEvent.from_signal(sig))
+
+        engine = BacktestEngine.from_config(minimal_config, managed_risk=False)
+        engine.register_market_handler(AlwaysSignal(engine.event_queue))
+
+        result = engine.run({"AAPL": _make_df(n=7)})
+
+        assert result.stats["signal_count"] == 7
+        assert result.stats["warmup_signal_count"] == 5
+        assert result.stats["order_count"] >= 1
+
     def test_engine_runs_to_completion(self, minimal_config):
         minimal_config.backtest.__dict__["warmup_bars"] = 0
         engine = BacktestEngine.from_config(minimal_config)
@@ -226,3 +282,48 @@ class TestBacktestEngine:
         # With warmup=0, handler should have been called
         # (minimal_config has warmup_bars=0)
         assert len(calls) >= 0  # No error thrown is the key assertion
+
+    def test_week4_outputs_exposed(self, minimal_config):
+        engine = BacktestEngine.from_config(minimal_config)
+        result = engine.run({"AAPL": _make_df(n=20)})
+        assert hasattr(result, "portfolio_snapshots_df")
+        assert hasattr(result, "risk_history_df")
+        assert hasattr(result, "trade_risk_df")
+
+    def test_managed_path_records_stop_trigger(self, minimal_config):
+        minimal_config.position_sizing.__dict__["method"] = "fixed_fractional"
+        minimal_config.position_sizing.__dict__["stop_method"] = "fixed_pct"
+        minimal_config.position_sizing.__dict__["fixed_stop_pct"] = 0.01
+        minimal_config.position_sizing.__dict__["min_trade_value"] = 100.0
+        minimal_config.risk.__dict__["allocation_method"] = "equal_weight"
+        minimal_config.risk.__dict__["max_open_positions"] = 5
+        minimal_config.risk.__dict__["max_daily_loss_pct"] = 0.20
+
+        class OneShotLong:
+            def __init__(self, event_queue):
+                self._event_queue = event_queue
+                self._fired = False
+
+            def on_market(self, event):
+                if self._fired:
+                    return
+                self._fired = True
+                sig = Signal(
+                    strategy_id="oneshot",
+                    symbol="AAPL",
+                    direction=SignalDirection.LONG,
+                    timestamp=event.timestamp,
+                    strength=1.0,
+                )
+                self._event_queue.put(SignalEvent.from_signal(sig))
+
+        engine = BacktestEngine.from_config(minimal_config, managed_risk=True)
+        engine.register_market_handler(OneShotLong(engine.event_queue))
+
+        df = _make_df(n=25, price_start=100.0)
+        ts = df.index[2]
+        df.loc[ts, "high"] = 101.0
+        df.loc[ts, "low"] = 95.0
+        df.loc[ts, "close"] = 100.0
+        result = engine.run({"AAPL": df})
+        assert result.stats["stop_triggers"] >= 1

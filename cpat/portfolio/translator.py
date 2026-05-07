@@ -1,31 +1,13 @@
 """
 CPAT — Signal → Order Translator
 ==================================
-Converts SignalEvents from strategies into sized OrderEvents, using
-current portfolio state to determine the correct action.
+Builds concrete market orders from already-sized trade intents.
 
-Signal Semantics:
-    LONG  (+1) → establish or maintain a long position
-    SHORT (-1) → establish or maintain a short position (if allowed)
-    FLAT  ( 0) → close any existing position in this symbol
-
-Position Flipping Logic:
-    - LONG  + currently short  → close short first, then open long (2 orders)
-    - SHORT + currently long   → close long first, then open short (2 orders)
-    - LONG  + currently flat   → open long
-    - LONG  + currently long   → no-op (already positioned)
-    - FLAT  + any position     → close position (1 order)
-    - FLAT  + flat             → no-op
-
-Position Sizing (Week 2 implementations):
-    - ``equal_weight``: allocate ``1 / n_signals`` of portfolio to each signal
-    - ``fixed_fraction``: allocate a fixed % of equity per signal
-    - ``inverse_volatility``: (stub, implemented in Week 3)
-
-Key design principle:
-    The Translator is STATELESS regarding time — it makes decisions
-    based purely on the current portfolio snapshot and the signal.
-    It never reads price history or future data.
+Week 4 design:
+    - Capital allocation and position sizing happen BEFORE the translator.
+    - The translator is now responsible only for turning portfolio state and
+      a desired direction into the correct close/open market orders.
+    - A legacy compatibility wrapper is kept for the baseline comparison mode.
 """
 
 from __future__ import annotations
@@ -36,11 +18,12 @@ from typing import Literal, Optional
 
 import pandas as pd
 
+from cpat.backtest.event_queue import EventQueue
 from cpat.core.enums import OrderSide, OrderType, SignalDirection
 from cpat.core.events import OrderEvent, SignalEvent
 from cpat.core.models import Bar, Order
-from cpat.backtest.event_queue import EventQueue
 from cpat.portfolio.manager import PortfolioManager
+from cpat.risk.position_sizing import PositionSize
 
 logger = logging.getLogger(__name__)
 
@@ -48,28 +31,14 @@ SizingMethod = Literal["equal_weight", "fixed_fraction", "inverse_volatility"]
 
 
 class SignalOrderTranslator:
-    """Converts SignalEvents into OrderEvents using portfolio state.
-
-    This component implements the **portfolio construction** layer:
-    it receives raw signals (direction only) and produces concrete
-    orders with specific quantities and sides.
-
-    Args:
-        portfolio: The PortfolioManager to query for current positions.
-        event_queue: Event bus to post OrderEvents to.
-        sizing_method: Position sizing algorithm.
-        target_weight: Target weight per position for equal_weight/fixed_fraction.
-        allow_short: Whether to generate SELL orders for SHORT signals.
-        min_trade_value: Minimum trade value (USD) — avoids tiny round lots.
-        max_position_weight: Hard cap on any single position (fraction of equity).
-    """
+    """Translate a signal plus portfolio state into executable orders."""
 
     def __init__(
         self,
         portfolio: PortfolioManager,
         event_queue: EventQueue,
         sizing_method: SizingMethod = "equal_weight",
-        target_weight: float = 0.02,  # 2% per position by default
+        target_weight: float = 0.02,
         allow_short: bool = False,
         min_trade_value: float = 500.0,
         max_position_weight: float = 0.05,
@@ -83,212 +52,168 @@ class SignalOrderTranslator:
         self._max_position_weight = max_position_weight
 
     def on_signal(self, event: SignalEvent) -> None:
-        """Process a SignalEvent and emit zero or more OrderEvents.
-
-        This is the Protocol-compatible handler for the signal event bus.
-
-        Args:
-            event: SignalEvent wrapping the Signal domain object.
-        """
+        """Compatibility path for legacy baseline flows."""
         signal = event.signal
-        symbol = signal.symbol
-        direction = signal.direction
-        strategy_id = signal.strategy_id
-
-        # Get current position and bar price from last snapshot
-        current_position = self._portfolio.get_position(symbol)
-
-        # We need the current price to size the order.
-        # It is passed via signal.metadata["last_price"] (set by engine)
-        last_price = signal.metadata.get("last_price", 0.0)
+        last_price = float(signal.metadata.get("last_price", 0.0))
         if last_price <= 0:
-            logger.debug(
-                "[translator] No price for %s in signal metadata; skipping.", symbol
-            )
+            logger.debug("[translator] No price metadata for %s; skipping.", signal.symbol)
             return
 
-        orders = self._build_orders(
-            symbol=symbol,
-            direction=direction,
-            current_position=current_position,
-            last_price=last_price,
+        legacy_size = self._build_legacy_position_size(signal.symbol, last_price)
+        orders = self.build_orders(
+            symbol=signal.symbol,
+            direction=signal.direction,
             timestamp=signal.timestamp,
-            strategy_id=strategy_id,
+            strategy_id=signal.strategy_id,
             signal_id=signal.signal_id,
+            position_size=legacy_size,
         )
-
         for order in orders:
-            order_event = OrderEvent.from_order(order)
-            self._event_queue.put(order_event)
-            logger.info(
-                "[translator] %s %s %.0f shares (signal=%s)",
-                order.side.value, order.symbol, order.quantity, direction.name,
-            )
+            self._event_queue.put(OrderEvent.from_order(order))
 
     def on_signal_with_bars(
         self,
         event: SignalEvent,
         current_bars: dict[str, Bar],
     ) -> None:
-        """Process a SignalEvent with access to current bar prices.
-
-        Preferred over ``on_signal`` when the engine passes bars explicitly,
-        avoiding the metadata dependency.
-
-        Args:
-            event: SignalEvent to process.
-            current_bars: Current bar data for price lookup.
-        """
-        signal = event.signal
-        symbol = signal.symbol
-
-        bar = current_bars.get(symbol)
+        """Compatibility path for legacy baseline flows."""
+        bar = current_bars.get(event.signal.symbol)
         if bar is None:
-            logger.debug("[translator] No bar for %s; skipping signal.", symbol)
+            logger.debug("[translator] No bar for %s; skipping signal.", event.signal.symbol)
             return
 
-        # Use close price for sizing (next bar's open will be the actual fill price)
-        last_price = bar.close
-        current_position = self._portfolio.get_position(symbol)
-
-        orders = self._build_orders(
-            symbol=symbol,
-            direction=signal.direction,
-            current_position=current_position,
-            last_price=last_price,
-            timestamp=signal.timestamp,
-            strategy_id=signal.strategy_id,
-            signal_id=signal.signal_id,
+        legacy_size = self._build_legacy_position_size(event.signal.symbol, float(bar.close))
+        orders = self.build_orders(
+            symbol=event.signal.symbol,
+            direction=event.signal.direction,
+            timestamp=event.signal.timestamp,
+            strategy_id=event.signal.strategy_id,
+            signal_id=event.signal.signal_id,
+            position_size=legacy_size,
         )
-
         for order in orders:
-            order_event = OrderEvent.from_order(order)
-            self._event_queue.put(order_event)
+            self._event_queue.put(OrderEvent.from_order(order))
 
-    # ── Internal order-building logic ──────────────────────────────────────────
-
-    def _build_orders(
+    def build_orders(
         self,
         symbol: str,
         direction: SignalDirection,
-        current_position: "Position",  # noqa: F821 # type: ignore[name-defined]
-        last_price: float,
         timestamp: pd.Timestamp,
         strategy_id: str,
         signal_id: Optional["UUID"] = None,  # type: ignore[name-defined]
+        position_size: Optional[PositionSize] = None,
     ) -> list[Order]:
-        """Core translation logic: signal + position state → orders.
-
-        Returns:
-            List of Orders (may be empty, 1 order, or 2 for position flips).
-        """
-        from cpat.core.models import Position as Pos
+        """Build the required close/open orders for a desired portfolio state."""
+        current_position = self._portfolio.get_position(symbol)
         orders: list[Order] = []
 
-        # ── Compute target quantity ────────────────────────────────────────────
-        target_qty = self._compute_target_quantity(symbol, last_price)
+        if direction == SignalDirection.FLAT:
+            close_order = self.build_close_order(symbol, timestamp, strategy_id, signal_id)
+            return [close_order] if close_order else []
 
-        match direction:
-            case SignalDirection.LONG:
-                if not self._allow_short and current_position.is_short:
-                    # Close short first
-                    close_order = self._make_order(
-                        symbol=symbol, side=OrderSide.BUY,
-                        quantity=abs(current_position.quantity),
-                        timestamp=timestamp, strategy_id=strategy_id,
-                        signal_id=signal_id,
-                    )
-                    orders.append(close_order)
-                    logger.debug("[translator] Close short before going long: %s", symbol)
+        if direction == SignalDirection.SHORT and not self._allow_short:
+            # In long-first mode, a short signal only closes an existing long.
+            close_order = self.build_close_order(symbol, timestamp, strategy_id, signal_id)
+            return [close_order] if close_order else []
 
-                if current_position.is_flat or current_position.is_short:
-                    # Open long
-                    if target_qty >= 1.0:
-                        buy_order = self._make_order(
-                            symbol=symbol, side=OrderSide.BUY,
-                            quantity=target_qty,
-                            timestamp=timestamp, strategy_id=strategy_id,
-                            signal_id=signal_id,
-                        )
-                        orders.append(buy_order)
-                # If already long: no-op (hold)
+        if current_position.is_long and direction == SignalDirection.LONG:
+            return []
 
-            case SignalDirection.SHORT:
-                if not self._allow_short:
-                    logger.debug(
-                        "[translator] SHORT signal for %s ignored (short selling disabled).", symbol
-                    )
-                    return []
+        if current_position.is_short and direction == SignalDirection.SHORT:
+            return []
 
-                if current_position.is_long:
-                    # Close long first
-                    close_order = self._make_order(
-                        symbol=symbol, side=OrderSide.SELL,
-                        quantity=abs(current_position.quantity),
-                        timestamp=timestamp, strategy_id=strategy_id,
-                        signal_id=signal_id,
-                    )
-                    orders.append(close_order)
+        if current_position.is_short and direction == SignalDirection.LONG:
+            close_order = self.build_close_order(symbol, timestamp, strategy_id, signal_id)
+            return [close_order] if close_order else []
 
-                if current_position.is_flat or current_position.is_long:
-                    if target_qty >= 1.0:
-                        sell_order = self._make_order(
-                            symbol=symbol, side=OrderSide.SELL,
-                            quantity=target_qty,
-                            timestamp=timestamp, strategy_id=strategy_id,
-                            signal_id=signal_id,
-                        )
-                        orders.append(sell_order)
+        if current_position.is_long and direction == SignalDirection.SHORT:
+            close_order = self.build_close_order(symbol, timestamp, strategy_id, signal_id)
+            return [close_order] if close_order else []
 
-            case SignalDirection.FLAT:
-                if current_position.is_long:
-                    close_order = self._make_order(
-                        symbol=symbol, side=OrderSide.SELL,
-                        quantity=abs(current_position.quantity),
-                        timestamp=timestamp, strategy_id=strategy_id,
-                        signal_id=signal_id,
-                    )
-                    orders.append(close_order)
-                elif current_position.is_short:
-                    close_order = self._make_order(
-                        symbol=symbol, side=OrderSide.BUY,
-                        quantity=abs(current_position.quantity),
-                        timestamp=timestamp, strategy_id=strategy_id,
-                        signal_id=signal_id,
-                    )
-                    orders.append(close_order)
-                # If flat: no-op
+        if position_size is None or not position_size.is_valid:
+            return []
 
+        side = OrderSide.BUY if direction == SignalDirection.LONG else OrderSide.SELL
+        orders.append(
+            self._make_order(
+                symbol=symbol,
+                side=side,
+                quantity=position_size.quantity,
+                timestamp=timestamp,
+                strategy_id=strategy_id,
+                signal_id=signal_id,
+                metadata={
+                    "stop_price": position_size.stop_price,
+                    "take_profit_price": position_size.take_profit_price,
+                    "risk_per_share": position_size.risk_per_share,
+                    "planned_risk": position_size.total_risk,
+                    "sizing_method": position_size.sizing_method,
+                    "allocation_weight": 0.0,
+                    "entry_price": position_size.entry_price,
+                    "atr": position_size.atr,
+                    "capital_budget": position_size.capital_budget,
+                },
+            )
+        )
         return orders
 
-    def _compute_target_quantity(self, symbol: str, price: float) -> float:
-        """Compute the target number of shares for a new position.
+    def build_close_order(
+        self,
+        symbol: str,
+        timestamp: pd.Timestamp,
+        strategy_id: str,
+        signal_id: Optional["UUID"] = None,  # type: ignore[name-defined]
+    ) -> Optional[Order]:
+        """Build a closing order for the current position, if one exists."""
+        position = self._portfolio.get_position(symbol)
+        if position.is_flat:
+            return None
 
-        Args:
-            symbol: Symbol being traded.
-            price: Reference price for sizing.
+        side = OrderSide.SELL if position.is_long else OrderSide.BUY
+        return self._make_order(
+            symbol=symbol,
+            side=side,
+            quantity=abs(position.quantity),
+            timestamp=timestamp,
+            strategy_id=strategy_id,
+            signal_id=signal_id,
+            metadata={"closing_order": True},
+        )
 
-        Returns:
-            Integer share quantity (floor to whole shares).
-        """
+    def _build_legacy_position_size(self, symbol: str, price: float) -> PositionSize:
+        """Legacy equal-weight sizing used only for baseline comparison mode."""
         if price <= 0:
-            return 0.0
+            return PositionSize(
+                symbol=symbol,
+                quantity=0.0,
+                entry_price=price,
+                stop_price=0.0,
+                take_profit_price=None,
+                risk_per_share=0.0,
+                total_risk=0.0,
+                atr=0.0,
+                sizing_method="legacy_equal_weight",
+                capital_budget=0.0,
+            )
 
-        # Use a surrogate price dict for equity lookup
-        # We approximate with cash as the base for sizing
-        equity = max(self._portfolio.cash, 1.0)
-        # Also count existing positions' approximate value
-        # (simplified: use cash for sizing to avoid circular dependency)
-
-        target_value = equity * min(self._target_weight, self._max_position_weight)
-
-        # Minimum trade filter
-        if target_value < self._min_trade_value:
-            target_value = self._min_trade_value
-
-        # Floor to whole shares
-        qty = math.floor(target_value / price)
-        return max(0.0, float(qty))
+        target_value = max(
+            self._min_trade_value,
+            self._portfolio.cash * min(self._target_weight, self._max_position_weight),
+        )
+        quantity = max(0.0, float(math.floor(target_value / price)))
+        stop_price = price * 0.98
+        return PositionSize(
+            symbol=symbol,
+            quantity=quantity,
+            entry_price=price,
+            stop_price=stop_price,
+            take_profit_price=None,
+            risk_per_share=max(price - stop_price, 0.0),
+            total_risk=max(quantity * (price - stop_price), 0.0),
+            atr=0.0,
+            sizing_method="legacy_equal_weight",
+            capital_budget=target_value,
+        )
 
     @staticmethod
     def _make_order(
@@ -298,6 +223,7 @@ class SignalOrderTranslator:
         timestamp: pd.Timestamp,
         strategy_id: str,
         signal_id: Optional["UUID"] = None,  # type: ignore[name-defined]
+        metadata: Optional[dict[str, object]] = None,
     ) -> Order:
         return Order(
             symbol=symbol,
@@ -307,4 +233,5 @@ class SignalOrderTranslator:
             timestamp=timestamp,
             strategy_id=strategy_id,
             signal_id=signal_id,
+            metadata=metadata or {},
         )

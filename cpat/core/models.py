@@ -195,6 +195,7 @@ class Order:
     limit_price: Optional[float] = None
     stop_price: Optional[float] = None
     status: OrderStatus = OrderStatus.PENDING
+    metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.quantity <= 0:
