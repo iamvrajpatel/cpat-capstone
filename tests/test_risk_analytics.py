@@ -297,6 +297,38 @@ class TestPerformanceTracker:
         assert report.total_return == pytest.approx(0.0, abs=0.01)
         assert report.n_trades == 0
 
+    def test_flat_curve_reports_neutral_metrics(self):
+        tracker = PerformanceTracker(initial_capital=100_000.0)
+        for i in range(30):
+            tracker.record(
+                pd.Timestamp("2022-01-03", tz="UTC") + pd.Timedelta(days=i),
+                100_000.0,
+            )
+
+        report = tracker.compute()
+
+        assert report.ann_volatility == pytest.approx(0.0)
+        assert report.sharpe_ratio == pytest.approx(0.0)
+        assert report.sortino_ratio == pytest.approx(0.0)
+        assert report.max_drawdown == pytest.approx(0.0)
+        assert report.profit_factor == pytest.approx(0.0)
+        assert report.skewness == pytest.approx(0.0)
+        assert report.kurtosis == pytest.approx(0.0)
+        assert report.tail_ratio == pytest.approx(1.0)
+
+    def test_short_series_distribution_metrics_are_safe(self):
+        tracker = PerformanceTracker(initial_capital=100_000.0)
+        tracker.record(pd.Timestamp("2022-01-03", tz="UTC"), 100_000.0)
+        tracker.record(pd.Timestamp("2022-01-04", tz="UTC"), 100_000.0000000001)
+
+        report = tracker.compute()
+
+        assert np.isfinite(report.sharpe_ratio)
+        assert np.isfinite(report.sortino_ratio)
+        assert report.skewness == pytest.approx(0.0)
+        assert report.kurtosis == pytest.approx(0.0)
+        assert report.tail_ratio == pytest.approx(1.0)
+
     def test_report_to_dict(self):
         tracker = self._uptrend_tracker(n=30)
         report = tracker.compute()

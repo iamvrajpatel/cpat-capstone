@@ -39,6 +39,7 @@ from cpat.core.enums import OrderSide
 logger = logging.getLogger(__name__)
 
 TRADING_DAYS = 252
+METRIC_EPSILON = 1e-12
 
 
 # ── Report dataclass ───────────────────────────────────────────────────────────
@@ -245,21 +246,27 @@ class PerformanceTracker:
         ann_return = (1 + total_return) ** (TRADING_DAYS / max(n, 1)) - 1
 
         # ── Volatility ────────────────────────────────────────────────────────
-        ann_volatility = float(returns.std()) * (TRADING_DAYS ** 0.5) if n > 1 else 0.0
+        returns_std = float(returns.std()) if n > 1 else 0.0
+        ann_volatility = returns_std * (TRADING_DAYS ** 0.5) if returns_std >= METRIC_EPSILON else 0.0
 
         # ── Sharpe ratio ──────────────────────────────────────────────────────
         daily_rf = self._risk_free_rate / TRADING_DAYS
         excess_returns = returns - daily_rf
+        excess_std = float(excess_returns.std()) if n > 1 else 0.0
         sharpe = (
-            float(excess_returns.mean()) / float(excess_returns.std()) * (TRADING_DAYS ** 0.5)
-            if n > 1 and excess_returns.std() > 0
+            float(excess_returns.mean()) / excess_std * (TRADING_DAYS ** 0.5)
+            if n > 1 and excess_std >= METRIC_EPSILON
             else 0.0
         )
 
         # ── Sortino ratio ─────────────────────────────────────────────────────
         downside = excess_returns[excess_returns < 0]
-        downside_std = float(downside.std()) * (TRADING_DAYS ** 0.5) if len(downside) > 1 else 1e-10
-        sortino = (ann_return - self._risk_free_rate) / downside_std if downside_std > 0 else 0.0
+        downside_std = float(downside.std()) * (TRADING_DAYS ** 0.5) if len(downside) > 1 else 0.0
+        sortino = (
+            (ann_return - self._risk_free_rate) / downside_std
+            if downside_std >= METRIC_EPSILON
+            else 0.0
+        )
 
         # ── Drawdown metrics ──────────────────────────────────────────────────
         dd_series = self.drawdown_series()
@@ -279,7 +286,12 @@ class PerformanceTracker:
         win_rate = n_profitable / n_trades if n_trades > 0 else 0.0
         gross_profit = sum(wins)
         gross_loss = sum(losses)
-        profit_factor = gross_profit / abs(gross_loss) if gross_loss < 0 else float("inf")
+        if n_trades == 0:
+            profit_factor = 0.0
+        elif gross_loss < 0:
+            profit_factor = gross_profit / abs(gross_loss)
+        else:
+            profit_factor = float("inf")
         avg_win = sum(wins) / len(wins) if wins else 0.0
         avg_loss = sum(losses) / len(losses) if losses else 0.0
 
@@ -289,12 +301,18 @@ class PerformanceTracker:
 
         # Return distribution statistics
         arr = returns.to_numpy()
-        if len(arr) >= 4:
+        if len(arr) >= 4 and float(np.std(arr)) >= METRIC_EPSILON:
             skewness = float(scipy_stats.skew(arr, bias=False))
             kurtosis = float(scipy_stats.kurtosis(arr, fisher=True, bias=False))
             p5 = float(np.percentile(arr, 5))
             p95 = float(np.percentile(arr, 95))
             tail_ratio = abs(p95) / max(abs(p5), 1e-10)
+            if not np.isfinite(skewness):
+                skewness = 0.0
+            if not np.isfinite(kurtosis):
+                kurtosis = 0.0
+            if not np.isfinite(tail_ratio):
+                tail_ratio = 1.0
         else:
             skewness = kurtosis = 0.0
             tail_ratio = 1.0

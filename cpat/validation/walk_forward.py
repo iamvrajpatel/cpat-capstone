@@ -37,17 +37,18 @@ from typing import Any, Literal, Optional
 import pandas as pd
 
 from cpat.analytics.performance import PerformanceReport, PerformanceTracker
+from cpat.backtest.event_queue import EventQueue
 from cpat.backtest.engine import BacktestResult
 from cpat.config.loader import CPATConfig
 from cpat.optimization.optimizer import (
     MEAN_REVERSION_PARAM_GRID,
     MOMENTUM_PARAM_GRID,
-    OptimizationResult,
     RandomSearchOptimizer,
     _apply_params_to_config,
     _run_single,
-    results_to_dataframe,
 )
+from cpat.strategies.mean_reversion import MeanReversionStrategy
+from cpat.strategies.momentum import MomentumStrategy
 from cpat.validation.splitter import _slice_bar_data, _union_timestamps
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,13 @@ class WalkForwardFold:
     is_report: PerformanceReport
     oos_report: PerformanceReport
     oos_equity: pd.Series
+    seed_bars: int = 0
+    eligible_bars: int = 0
+    oos_bars: int = 0
+    n_oos_signals: int = 0
+    n_oos_trades: int = 0
+    n_oos_fills: int = 0
+    n_oos_orders: int = 0
 
     @property
     def degradation(self) -> float:
@@ -130,6 +138,14 @@ class WalkForwardFold:
             "is_max_dd_pct": round(self.is_report.max_drawdown * 100, 2),
             "oos_max_dd_pct": round(self.oos_report.max_drawdown * 100, 2),
             "degradation_ratio": round(self.degradation, 3),
+            "seed_bars": self.seed_bars,
+            "eligible_bars": self.eligible_bars,
+            "oos_bars": self.oos_bars,
+            "n_oos_signals": self.n_oos_signals,
+            "n_oos_trades": self.n_oos_trades,
+            "n_oos_fills": self.n_oos_fills,
+            "n_oos_orders": self.n_oos_orders,
+            "profitable_fold": self.oos_report.total_return > 0,
             "best_params": self.best_params,
         }
 
@@ -240,6 +256,7 @@ class WalkForwardValidator:
         )
 
         folds: list[WalkForwardFold] = []
+        combined_oos_fills = []
         fold_id = 0
         start_idx = 0
 
@@ -287,6 +304,18 @@ class WalkForwardValidator:
                 fold_config = base_config
                 best_params = {}
 
+            strategy_min_bars = _strategy_min_bars_required(self.strategy, fold_config)
+            seed_bars = max(fold_config.backtest.warmup_bars, strategy_min_bars)
+            train_ts = _union_timestamps(train_data)
+            if len(train_ts) < seed_bars:
+                logger.info(
+                    "[WF] Fold %d skipped: train history %d < required seed %d",
+                    fold_id, len(train_ts), seed_bars,
+                )
+                start_idx += step_n
+                fold_id += 1
+                continue
+
             # ── Step 2: IS backtest (train window) ─────────────────────────────
             try:
                 is_result = _run_single(train_data, fold_config, self.strategy)
@@ -299,14 +328,34 @@ class WalkForwardValidator:
 
             # ── Step 3: OOS backtest (test window) ────────────────────────────
             try:
-                oos_result = _run_single(test_data, fold_config, self.strategy)
-                oos_report = oos_result.report
-                oos_equity = oos_result.equity_curve
+                seeded_test_data = _build_seeded_oos_data(
+                    train_data=train_data,
+                    test_data=test_data,
+                    seed_bars=seed_bars,
+                )
+                seeded_backtest_cfg = fold_config.backtest.model_copy(
+                    update={"warmup_bars": seed_bars}
+                )
+                seeded_fold_config = fold_config.model_copy(
+                    update={"backtest": seeded_backtest_cfg}
+                )
+                oos_result = _run_single(seeded_test_data, seeded_fold_config, self.strategy)
+                trimmed = _trim_oos_result(
+                    result=oos_result,
+                    true_test_start=test_start,
+                    risk_free_rate=fold_config.risk.risk_free_rate,
+                )
+                oos_report = trimmed["report"]
+                oos_equity = trimmed["equity_curve"]
+                oos_fills = trimmed["fills"]
+                oos_orders = trimmed["orders"]
             except Exception as exc:
                 logger.warning("[WF] Fold %d OOS failed: %s", fold_id, exc)
                 start_idx += step_n
                 fold_id += 1
                 continue
+
+            combined_oos_fills.extend(oos_fills)
 
             fold = WalkForwardFold(
                 fold_id=fold_id,
@@ -318,6 +367,17 @@ class WalkForwardValidator:
                 is_report=is_report,
                 oos_report=oos_report,
                 oos_equity=oos_equity,
+                seed_bars=seed_bars,
+                eligible_bars=len(oos_equity),
+                oos_bars=len(_union_timestamps(test_data)),
+                n_oos_signals=max(
+                    int(oos_result.stats.get("signal_count", 0))
+                    - int(oos_result.stats.get("warmup_signal_count", 0)),
+                    0,
+                ),
+                n_oos_trades=oos_report.n_trades,
+                n_oos_fills=len(oos_fills),
+                n_oos_orders=len(oos_orders),
             )
             folds.append(fold)
 
@@ -332,12 +392,12 @@ class WalkForwardValidator:
 
         # ── Step 5: Compute aggregate metrics ────────────────────────────────
         oos_tracker = PerformanceTracker(
-            initial_capital=base_config.backtest.initial_capital,
+            initial_capital=float(combined_oos_equity.iloc[0]) if not combined_oos_equity.empty else base_config.backtest.initial_capital,
             risk_free_rate=getattr(base_config.risk, "risk_free_rate", 0.04),
         )
         for ts, val in combined_oos_equity.items():
             oos_tracker.record(ts, val)
-        oos_report = oos_tracker.compute()
+        oos_report = oos_tracker.compute(fills=combined_oos_fills)
 
         mean_is = float(sum(f.is_report.sharpe_ratio for f in folds) / len(folds))
         mean_oos = float(sum(f.oos_report.sharpe_ratio for f in folds) / len(folds))
@@ -398,3 +458,66 @@ def _stitch_equity_curves(curves: list[pd.Series]) -> pd.Series:
     combined = combined.sort_index()
     combined.name = "equity"
     return combined
+
+
+def _strategy_min_bars_required(
+    strategy: Literal["momentum", "mean_reversion"],
+    config: CPATConfig,
+) -> int:
+    """Instantiate a strategy and return its required history length."""
+    queue = EventQueue()
+    if strategy == "momentum":
+        return MomentumStrategy(config.strategies.momentum, queue, symbols=[]).min_bars_required
+    return MeanReversionStrategy(config.strategies.mean_reversion, queue, symbols=[]).min_bars_required
+
+
+def _build_seeded_oos_data(
+    train_data: dict[str, pd.DataFrame],
+    test_data: dict[str, pd.DataFrame],
+    seed_bars: int,
+) -> dict[str, pd.DataFrame]:
+    """Prepend trailing train history to each OOS fold for warmup/state seeding."""
+    seeded: dict[str, pd.DataFrame] = {}
+    for symbol, test_df in test_data.items():
+        if test_df.empty:
+            continue
+        train_df = train_data.get(symbol)
+        if train_df is None or train_df.empty:
+            seeded[symbol] = test_df.copy()
+            continue
+        seed_df = train_df.tail(seed_bars)
+        combined = pd.concat([seed_df, test_df])
+        combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+        seeded[symbol] = combined
+    return seeded
+
+
+def _trim_oos_result(
+    result: BacktestResult,
+    true_test_start: pd.Timestamp,
+    risk_free_rate: float,
+) -> dict[str, object]:
+    """Trim seeded history from a backtest result and recompute pure OOS metrics."""
+    oos_equity = result.equity_curve[result.equity_curve.index >= true_test_start].copy()
+    oos_orders = [order for order in result.orders if order.timestamp >= true_test_start]
+    oos_fills = [fill for fill in result.fills if fill.timestamp >= true_test_start]
+
+    initial_capital = (
+        float(oos_equity.iloc[0])
+        if not oos_equity.empty
+        else result.initial_capital
+    )
+    tracker = PerformanceTracker(
+        initial_capital=initial_capital,
+        risk_free_rate=risk_free_rate,
+    )
+    for ts, val in oos_equity.items():
+        tracker.record(ts, float(val))
+    oos_report = tracker.compute(fills=oos_fills)
+
+    return {
+        "equity_curve": oos_equity,
+        "orders": oos_orders,
+        "fills": oos_fills,
+        "report": oos_report,
+    }

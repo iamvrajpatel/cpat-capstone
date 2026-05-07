@@ -7,7 +7,11 @@ from cpat.validation.splitter import (
     TimeSeriesSplit, train_test_split, time_series_cv_folds, _union_timestamps,
 )
 from cpat.validation.walk_forward import (
-    WalkForwardConfig, WalkForwardValidator, WalkForwardResult, _stitch_equity_curves,
+    WalkForwardConfig,
+    WalkForwardValidator,
+    WalkForwardResult,
+    _build_seeded_oos_data,
+    _stitch_equity_curves,
 )
 from cpat.validation.overfitting import (
     degradation_report, compute_sensitivity, stability_check, ParameterSensitivity,
@@ -214,12 +218,36 @@ class TestWalkForwardValidator:
         assert isinstance(df, pd.DataFrame)
         assert "is_sharpe" in df.columns
         assert "oos_sharpe" in df.columns
+        assert "seed_bars" in df.columns
+        assert "eligible_bars" in df.columns
+        assert "n_oos_signals" in df.columns
+        assert "n_oos_fills" in df.columns
+        assert "profitable_fold" in df.columns
 
     def test_fold_degradation_is_float(self, cfg, bar_data, wf_config):
         wf = WalkForwardValidator(strategy="momentum", wf_config=wf_config)
         result = wf.run(bar_data, cfg)
         for fold in result.folds:
             assert isinstance(fold.degradation, float)
+
+    def test_combined_oos_curve_excludes_seed_period(self, cfg, bar_data, wf_config):
+        wf = WalkForwardValidator(strategy="momentum", wf_config=wf_config)
+        result = wf.run(bar_data, cfg)
+        assert result.combined_oos_equity.index.min() >= min(f.test_start for f in result.folds)
+
+    def test_seeded_oos_helper_prepends_trailing_train_history(self):
+        train = {"AAPL": _make_bar_df(n=10)}
+        test_df = _make_bar_df(n=4)
+        test_df.index = test_df.index + pd.Timedelta(days=14)
+        test = {"AAPL": test_df}
+        seeded = _build_seeded_oos_data(train, test, seed_bars=3)
+
+        seeded_df = seeded["AAPL"]
+        expected_seed_index = train["AAPL"].tail(3).index
+
+        assert len(seeded_df) == 7
+        assert list(seeded_df.index[:3]) == list(expected_seed_index)
+        assert seeded_df.index.is_monotonic_increasing
 
     def test_str_output(self, cfg, bar_data, wf_config):
         wf = WalkForwardValidator(strategy="momentum", wf_config=wf_config)

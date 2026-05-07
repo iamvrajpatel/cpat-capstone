@@ -1,12 +1,12 @@
 # CPAT — Multi-Asset Algorithmic Trading System
 
-[![Tests](https://img.shields.io/badge/tests-260%20passed-brightgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-84%25-green)]()
+[![Tests](https://img.shields.io/badge/tests-357%20passed-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-85%25-green)]()
 [![Python](https://img.shields.io/badge/python-3.12-blue)]()
 [![Architecture](https://img.shields.io/badge/architecture-event--driven-purple)]()
-[![Week](https://img.shields.io/badge/week-3%20complete-orange)]()
+[![Week](https://img.shields.io/badge/week-4%20complete-orange)]()
 
-A **production-grade, event-driven multi-asset algorithmic trading system** for quantitative research and live trading. Supports the **India universe** (69 NSE equities + 11 Indian indices + 9 global commodity futures), two strategy families (momentum + mean reversion), a fully integrated risk engine, institutional-grade performance analytics, a bias-aware optimization framework, and walk-forward validation.
+A **production-grade, event-driven multi-asset algorithmic trading system** for quantitative research and live trading. Supports the **India universe** (69 NSE equities + 11 Indian indices + 9 global commodity futures), two strategy families (momentum + mean reversion), a fully integrated risk engine, ATR-based position sizing, stop-loss management, institutional-grade performance analytics, parameter optimization, and walk-forward validation.
 
 ---
 
@@ -24,11 +24,14 @@ cpat/
 ├── strategies/          Momentum (cross-sectional) + Mean Reversion (Bollinger + RSI)
 ├── portfolio/
 │   ├── manager.py       PortfolioManager — cash, positions, equity, exposure
-│   └── translator.py    SignalOrderTranslator — signal → sized order
+│   ├── translator.py    SignalOrderTranslator — signal → sized order
+│   └── allocator.py     CapitalAllocator — equal/vol-adjusted distribution  [Week 4]
 ├── execution/
 │   └── engine.py        ExecutionEngine v2 — 3 slippage models, partial fills
 ├── risk/
-│   └── engine.py        RiskEngine — 5 configurable pre-trade constraints
+│   ├── engine.py          RiskEngine — 5 configurable pre-trade constraints
+│   ├── position_sizing.py FixedFractional + InverseVol + Kelly sizers  [Week 4]
+│   └── risk_manager.py    StopLossTracker + PortfolioRiskManager  [Week 4]
 ├── analytics/
 │   ├── performance.py   PerformanceTracker — 20 metrics (Sharpe, Sortino, Calmar…)
 │   ├── drawdown.py      DrawdownPeriod table, Ulcer Index  [Week 3]
@@ -48,15 +51,21 @@ cpat/
 ```
 DataHandler.get_next()
     │
-    ├─ 1. ExecutionEngine.process_pending()   ← fills at THIS bar's open (anti-bias)
+    ├─ 0. StopLossTracker.check_stops()          ← stops fire at bar open  [Week 4]
+    │       └─ Emits FLAT SignalEvents for breached stops/TPs
+    │
+    ├─ 1. ExecutionEngine.process_pending()      ← fills at THIS bar's open (anti-bias)
     │       └─ PortfolioManager.apply_fill()
     │       └─ TradeLog.record()
     │
-    ├─ 2. queue.put(MarketEvent)              ← strategy sees bar AFTER fill
+    ├─ 2. queue.put(MarketEvent)                 ← strategy sees bar AFTER fill
     │
     ├─ 3. drain_queue()
     │       MarketEvent  → Strategy.on_market()  → SignalEvent
-    │       SignalEvent  → SignalOrderTranslator  → RiskEngine.check() → OrderEvent
+    │       SignalEvent  → PortfolioAllocator.allocate()   [Week 4]
+    │                   → PositionSizer.compute()         [Week 4]
+    │                   → PortfolioRiskManager.can_open() [Week 4]
+    │                   → SignalOrderTranslator → RiskEngine.check() → OrderEvent
     │       OrderEvent   → ExecutionEngine.submit()  (deferred to next bar)
     │
     └─ 4. PerformanceTracker.record(equity)
@@ -159,6 +168,20 @@ risk:
   max_drawdown_pct: 0.12       # 12% drawdown halt
   min_cash_pct: 0.05           # 5% cash buffer (STT + settlement)
   risk_free_rate: 0.065        # 6.5% — RBI repo rate
+  allocation_method: volatility_adjusted
+  max_open_positions: 20
+  max_daily_loss_pct: 0.02
+
+position_sizing:
+  method: inverse_volatility
+  stop_method: atr             # atr | fixed_pct
+  fixed_stop_pct: 0.02
+  atr_period: 14
+  atr_multiplier: 2.0
+  take_profit_mult: 3.0
+  trailing_stop: false
+  vol_window: 20
+  min_trade_value: 5000.0
 
 optimization:
   method: random               # grid | random
@@ -360,6 +383,9 @@ python scripts/run_backtest.py --mode optimize --strategy mean_reversion
 # Walk-forward validation — fold table + combined OOS curve
 python scripts/run_backtest.py --mode walk-forward --strategy momentum
 
+# Baseline vs managed risk comparison
+python scripts/run_backtest.py --mode compare --strategy momentum
+
 # Run both strategies together
 python scripts/run_backtest.py --mode backtest --strategy both
 ```
@@ -369,16 +395,60 @@ python scripts/run_backtest.py --mode backtest --strategy both
 | File | Contents |
 |------|---------|
 | `equity_curve_{strategy}.csv` | Full-period equity curve |
+| `comparison_{strategy}.csv` | Baseline vs managed risk summary table |
+| `risk_history_{strategy}.csv` | Portfolio risk telemetry over time |
+| `trade_risk_{strategy}.csv` | Planned risk, stops, fills, and stop reasons |
 | `optimization_{strategy}.csv` | All param combinations × metrics table |
 | `walk_forward_oos_{strategy}.csv` | Stitched OOS equity curve |
+
+---
+
+## Position Sizing (Week 4)
+
+All new positions are sized by the `PositionSizer` *before* reaching the translator.  Three methods are available:
+
+| Method | Formula | Best For |
+|--------|---------|----------|
+| **Fixed Fractional** | `qty = floor(min(capital_budget, equity × risk_pct) / entry_price)` | Fixed capital deployment per trade |
+| **Inverse Volatility** *(default)* | `qty = floor(min(risk_budget / stop_distance, capital_budget / price))` | Multi-asset portfolios |
+| **Kelly** | `f* = (W·avg_win − L·avg_loss) / avg_win`; half-Kelly capped at 25% | High win-rate strategies |
+
+**Stop-loss is mandatory** — every position gets:
+- **ATR stop**: `entry − atr_mult × ATR(14)` (default: 2× ATR below entry)
+- **Fixed % stop**: `entry × (1 − fixed_stop_pct)` when `stop_method: fixed_pct`
+- **Take-profit**: `entry + tp_mult × stop_distance`
+- **Trailing stop**: optional, ratchets up as price moves favourably
+
+---
+
+## Capital Allocation (Week 4)
+
+| Method | Rule | Use Case |
+|--------|------|---------|
+| `equal_weight` | Deploy `deployable_cash / n_signals` per symbol | Simple, robust baseline |
+| `volatility_adjusted` | Weight ∝ `1/σ` (20-day std dev) | Reduces concentration in volatile assets |
+
+Deployable cash = `cash × (1 − min_cash_pct)`.  Each slice is capped at `max_position_pct × equity`.
+
+---
+
+## Portfolio-Level Risk Controls (Week 4)
+
+| Control | Default | Effect |
+|---------|---------|-------|
+| `max_open_positions` | 20 | Blocks new opens when 20 positions are open |
+| `max_daily_loss_pct` | 2% | Halts all new opens if today's equity drop > 2% |
+| `max_drawdown_pct` *(existing)* | 12% | Halts all new opens during drawdown |
+| `max_position_pct` *(existing)* | 4% | Reduces order to respect single-name cap |
+| `max_sector_pct` *(existing)* | 25% | Rejects order breaching sector limit |
 
 ---
 
 ## Test Suite
 
 ```bash
-pytest tests/ -v             # 260 tests, ~31s
-pytest tests/ --cov=cpat     # With coverage report (84% overall)
+pytest tests/ -v             # 357 tests, ~51s
+pytest tests/ --cov=cpat     # With coverage report (85% overall)
 ```
 
 **Test breakdown:**
@@ -395,14 +465,16 @@ pytest tests/ --cov=cpat     # With coverage report (84% overall)
 | `test_analytics_ext.py` | 39 | Drawdown table, distributions, extended Report fields |
 | `test_optimizer.py` | 28 | GridSearch, RandomSearch, param validation, result table |
 | `test_validation.py` | 35 | Splitter, walk-forward, overfitting detection |
+| `test_position_sizing.py` | 36 | ATR, FixedFractional, InverseVol, Kelly, Factory |
+| `test_risk_manager.py` | 33 | StopLevel, StopLossTracker, PortfolioRiskManager |
+| `test_allocator.py` | 28 | EqualWeight, VolatilityAdjusted, sigma, AllocatorFactory |
 
 ---
 
-## Week 4 Roadmap
+## Week 5 Roadmap
 
+- [ ] **Zerodha Kite adapter** — Indian live trading via Kite Connect API
 - [ ] **Parallel optimizer** — `concurrent.futures` for 80% speed improvement
 - [ ] **Benchmark analytics** — Alpha / Beta vs `^NSEI` in `PerformanceReport`
-- [ ] **Inverse-volatility position sizing** in `SignalOrderTranslator`
 - [ ] **Plotly dashboard** — equity curve + drawdown + monthly return heatmap
-- [ ] **Zerodha Kite adapter** — Indian live trading via Kite Connect API
 - [ ] **Multi-strategy ensemble** — weighted signal aggregation layer
