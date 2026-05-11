@@ -9,3 +9,5 @@ structlog>=24.1
 rich>=13.7
 scipy>=1.13
 click>=8.1
+streamlit>=1.44
+plotly>=5.24
