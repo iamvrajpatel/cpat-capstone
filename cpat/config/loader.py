@@ -247,6 +247,31 @@ class PositionSizingConfig(BaseModel):
     kelly_max_fraction: Annotated[float, Field(gt=0, le=0.5)] = 0.25
 
 
+class LiveTradingConfig(BaseModel):
+    """Live / paper trading runtime configuration (Week 5)."""
+
+    broker: Literal["paper", "dhan"] = "paper"           # which adapter to use
+    paper_initial_capital: float = 10_000_000.0           # ₹1 Crore paper capital
+    paper_slip_bps: float = 3.0                            # 3 bps slippage for paper
+    paper_commission_pct: float = 0.0003                   # 3 bps commission
+    scheduler_interval_seconds: Annotated[int, Field(ge=1)] = 60
+    market_open: str = "09:15"                             # IST market open
+    market_close: str = "15:29"                            # IST market close
+    scheduler_timezone: str = "Asia/Kolkata"
+    scheduler_mode: Literal["market_hours", "always"] = "market_hours"
+    max_tick_errors: Annotated[int, Field(ge=1)] = 5
+    stale_data_seconds: Annotated[int, Field(ge=0)] = 300
+    order_status_poll_interval_seconds: Annotated[int, Field(ge=1)] = 5
+    order_ttl_seconds: Annotated[int, Field(ge=1)] = 300
+    max_order_retries: Annotated[int, Field(ge=0, le=10)] = 2
+    retry_backoff_seconds: Annotated[float, Field(gt=0)] = 1.0
+    reconcile_on_startup: bool = True
+    demo_ticks: Annotated[int, Field(ge=1)] = 5
+    oms_audit_log: str = "logs/live/oms_audit.jsonl"       # OMS JSON-line audit
+    trade_log_dir: str = "logs/live"                       # LiveTradeLogger output dir
+    dry_run: bool = False                                  # Generate orders but don't send
+
+
 # ── Root Config ────────────────────────────────────────────────────────────────
 
 
@@ -277,6 +302,7 @@ class CPATConfig(BaseModel):
     optimization: OptimizationConfig = Field(default_factory=OptimizationConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
+    live: LiveTradingConfig = Field(default_factory=LiveTradingConfig)  # Week 5
 
 
 # ── Loader ─────────────────────────────────────────────────────────────────────

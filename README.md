@@ -4,7 +4,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-85%25-green)]()
 [![Python](https://img.shields.io/badge/python-3.12-blue)]()
 [![Architecture](https://img.shields.io/badge/architecture-event--driven-purple)]()
-[![Week](https://img.shields.io/badge/week-4%20complete-orange)]()
+[![Week](https://img.shields.io/badge/week-5%20live-orange)]()
 
 A **production-grade, event-driven multi-asset algorithmic trading system** for quantitative research and live trading. Supports the **India universe** (69 NSE equities + 11 Indian indices + 9 global commodity futures), two strategy families (momentum + mean reversion), a fully integrated risk engine, ATR-based position sizing, stop-loss management, institutional-grade performance analytics, parameter optimization, and walk-forward validation.
 
@@ -43,7 +43,8 @@ cpat/
 │   ├── splitter.py      Forward-only train/test split + CV folds  [Week 3]
 │   ├── walk_forward.py  Rolling OOS walk-forward harness  [Week 3]
 │   └── overfitting.py   Parameter sensitivity + degradation report  [Week 3]
-└── infrastructure/      Structured logging (console + JSON)
+├── brokers/             PaperBroker + DhanBroker adapters  [Week 5]
+└── infrastructure/      OMS, scheduler, live engine, structured logging  [Week 5]
 ```
 
 **Event flow (per bar):**
@@ -195,6 +196,102 @@ validation:
   walk_forward_step_bars: 63    # quarterly step
   optimize_on_fold: false
 ```
+
+## Live Trading (Week 5)
+
+### System Architecture
+
+```
+Scheduler
+  -> LiveExecutionEngine.run_tick()
+      -> data provider / broker quote sync
+      -> StopLossTracker
+      -> Strategy.on_market() via MarketEvent
+      -> signal batch -> allocator -> position sizer -> risk checks
+      -> OrderManager (OMS)
+      -> BrokerInterface adapter (PaperBroker / DhanBroker)
+      -> fill polling -> PortfolioManager update
+      -> structured logs + heartbeat + reconciliation
+```
+
+### Broker Integration
+
+- `PaperBroker`: mandatory paper-trading acceptance path, instant in-memory fills, no API keys required.
+- `DhanBroker`: live Indian broker adapter using `DHAN_CLIENT_ID` and `DHAN_ACCESS_TOKEN`.
+- `BrokerInterface` is the canonical adapter contract; broker-specific logic is isolated behind the adapter.
+- Limitation: the current live path is candle-driven and uses a rolling OHLCV provider, not tick-by-tick execution.
+
+### OMS Lifecycle
+
+- Internal `OrderStatus` remains the source of truth for code paths.
+- Audit/log lifecycle labels are exported as:
+  - `CREATED`
+  - `SENT`
+  - `PARTIALLY_FILLED`
+  - `FILLED`
+  - `REJECTED`
+  - `CANCELLED`
+  - `EXPIRED`
+- OMS supports idempotent broker status application, stale-order expiry, and JSONL audit-log replay on restart.
+
+### Failure Handling
+
+- Broker connectivity errors retry with exponential backoff.
+- Stale or missing market data causes a tick or symbol to be skipped, never a process crash.
+- Reconciliation mismatches between broker state and local portfolio block new opens and emit critical logs.
+- Scheduler overlap protection skips a tick instead of running concurrent execution loops.
+
+### Deployment
+
+```bash
+# Paper/demo validation
+python scripts/run_live.py --mode paper --demo
+
+# Paper with dry-run order generation only
+python scripts/run_live.py --mode paper --dry-run --symbols RELIANCE.NS TCS.NS
+
+# Live Dhan mode (requires env vars + local seed data)
+export DHAN_CLIENT_ID=...
+export DHAN_ACCESS_TOKEN=...
+python scripts/run_live.py --mode dhan --symbols RELIANCE.NS TCS.NS
+```
+
+- Logs are written to `logs/live/`.
+- OMS audit trail is written to `logs/live/oms_audit.jsonl`.
+- For unattended deployment, run `scripts/run_live.py` under `systemd`, Docker, or another process supervisor.
+
+## Streamlit Control Console
+
+The project now includes a modular Streamlit orchestration layer under `ui/`.
+
+```bash
+streamlit run ui/app.py
+```
+
+### UI Architecture
+
+- `ui/app.py`: application entrypoint, navigation shell, theme injection
+- `ui/pages/`: dashboard, backtest, optimization, live trading, portfolio/risk, analytics, logs, settings
+- `ui/services/`: config parsing, backend execution wrappers, analytics adapters, strategy metadata
+- `ui/components/`: reusable forms, charts, metric cards, tables, live controls
+- `ui/state/session_manager.py`: typed `st.session_state` abstraction
+
+### What the UI Controls
+
+- Dynamic config editing from `config/settings.yaml`
+- Backtest, compare, optimize, and walk-forward execution
+- Parameter-sweep overlays without mutating scalar YAML defaults
+- Managed `scripts/run_live.py` subprocess control for paper/live sessions
+- Saved research artifacts in `data/results/`
+- Runtime, live JSONL, and OMS audit logs in `logs/`
+
+### Mock Layout Description
+
+- `Dashboard`: dense KPI header, equity and drawdown panels, exposure strip, runtime state card
+- `Backtesting`: left-side run controls with inline config overrides, right-side performance charts and trade tables
+- `Optimization`: sweep definition panel, combination counter, results grid, 2D heatmap surface
+- `Live Trading`: broker mode selector, arming checkbox, start/stop/kill controls, OMS table, process log tail
+- `Settings`: full sectioned config editor generated from the typed schema
 
 ---
 

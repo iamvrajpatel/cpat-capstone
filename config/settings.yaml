@@ -255,3 +255,29 @@ position_sizing:
   kelly_avg_win: 1.5
   kelly_avg_loss: 1.0
   kelly_max_fraction: 0.25        # Half-Kelly cap — never exceed 25% in one position
+
+# ── Live Trading (Week 5) ─────────────────────────────────────────────────────
+# Controls the live/paper execution loop.
+# Credentials are NEVER stored here — use environment variables:
+#   DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN
+live:
+  broker: paper                         # paper | dhan
+  paper_initial_capital: 10000000.0     # ₹1 Crore starting capital for paper mode
+  paper_slip_bps: 3.0                   # 3 bps market impact simulation
+  paper_commission_pct: 0.0003          # 3 bps Dhan-equivalent commission
+  scheduler_interval_seconds: 60        # Tick frequency (seconds) — 60 = every 1 min
+  market_open: "09:15"                  # NSE open (IST)
+  market_close: "15:29"                 # NSE close (last actionable minute)
+  scheduler_timezone: "Asia/Kolkata"
+  scheduler_mode: market_hours          # market_hours | always (always = for testing)
+  max_tick_errors: 5                    # Consecutive errors before scheduler halts
+  stale_data_seconds: 300               # Max age of newest bar before a tick is skipped
+  order_status_poll_interval_seconds: 5 # Broker status polling cadence for open orders
+  order_ttl_seconds: 300                # Cancel/expire orders older than this many seconds
+  max_order_retries: 2                  # Retryable broker submit attempts
+  retry_backoff_seconds: 1.0            # Exponential backoff base delay
+  reconcile_on_startup: true            # Block new opens if broker/local state mismatches
+  demo_ticks: 5                         # Number of ticks for `run_live.py --demo`
+  oms_audit_log: "logs/live/oms_audit.jsonl"
+  trade_log_dir: "logs/live"
+  dry_run: false                        # true = print orders, do not send to broker
