@@ -109,18 +109,24 @@ python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt && pip install -e .
 
 # 3. Download historical data (Yahoo Finance — Indian universe)
-python scripts/fetch_universe.py
+python3.12 scripts/fetch_universe.py
 
 # 4. Run a standard backtest (full period, complete report)
-python scripts/run_backtest.py --mode backtest --strategy momentum
+python3.12 scripts/run_backtest.py --mode backtest --strategy momentum
 
 # 5. Optimize parameters on training split, evaluate OOS
-python scripts/run_backtest.py --mode optimize --strategy momentum
+python3.12 scripts/run_backtest.py --mode optimize --strategy momentum
 
 # 6. Walk-forward validation (fold table + stitched OOS equity)
-python scripts/run_backtest.py --mode walk-forward --strategy momentum
+python3.12 scripts/run_backtest.py --mode walk-forward --strategy momentum
 
-# 7. Run tests with coverage
+# 7. Compare baseline vs managed risk controls
+python3.12 scripts/run_backtest.py --mode compare --strategy mean_reversion
+
+# 8. Launch the Streamlit control console
+streamlit run ui/app.py
+
+# 9. Run tests with coverage
 pytest tests/ -v --cov=cpat
 ```
 
@@ -245,15 +251,15 @@ Scheduler
 
 ```bash
 # Paper/demo validation
-python scripts/run_live.py --mode paper --demo
+python3.12 scripts/run_live.py --mode paper --demo
 
 # Paper with dry-run order generation only
-python scripts/run_live.py --mode paper --dry-run --symbols RELIANCE.NS TCS.NS
+python3.12 scripts/run_live.py --mode paper --dry-run --symbols RELIANCE.NS TCS.NS
 
 # Live Dhan mode (requires env vars + local seed data)
 export DHAN_CLIENT_ID=...
 export DHAN_ACCESS_TOKEN=...
-python scripts/run_live.py --mode dhan --symbols RELIANCE.NS TCS.NS
+python3.12 scripts/run_live.py --mode dhan --symbols RELIANCE.NS TCS.NS
 ```
 
 - Logs are written to `logs/live/`.
@@ -469,22 +475,94 @@ stability = stability_check(results_df, metric="sharpe_ratio")
 
 ## CLI Reference
 
+Examples below intentionally use the script entrypoints in `scripts/`. The packaged commands declared in `pyproject.toml` are not documented here because they do not currently map to modules present in this repository tree.
+
+### `scripts/fetch_universe.py`
+
 ```bash
-# Standard backtest — full period, all 20 metrics, drawdown table
-python scripts/run_backtest.py --mode backtest --strategy momentum
+# Download the full configured universe
+python3.12 scripts/fetch_universe.py
 
-# Parameter optimization — train split only, prints OOS evaluation
-python scripts/run_backtest.py --mode optimize --strategy momentum
-python scripts/run_backtest.py --mode optimize --strategy mean_reversion
+# Use a custom config file
+python3.12 scripts/fetch_universe.py --config config/settings.yaml
 
-# Walk-forward validation — fold table + combined OOS curve
-python scripts/run_backtest.py --mode walk-forward --strategy momentum
+# Download a bounded date range
+python3.12 scripts/fetch_universe.py --start 2020-01-01 --end 2024-12-31
 
-# Baseline vs managed risk comparison
-python scripts/run_backtest.py --mode compare --strategy momentum
+# Force refresh even if cached
+python3.12 scripts/fetch_universe.py --force
 
-# Run both strategies together
-python scripts/run_backtest.py --mode backtest --strategy both
+# Override log level
+python3.12 scripts/fetch_universe.py --log-level DEBUG
+```
+
+### `scripts/run_backtest.py`
+
+```bash
+# Backtest: momentum
+python3.12 scripts/run_backtest.py --mode backtest --strategy momentum
+
+# Backtest: mean reversion
+python3.12 scripts/run_backtest.py --mode backtest --strategy mean_reversion
+
+# Backtest: both strategies together
+python3.12 scripts/run_backtest.py --mode backtest --strategy both
+
+# Compare baseline vs managed risk: momentum
+python3.12 scripts/run_backtest.py --mode compare --strategy momentum
+
+# Compare baseline vs managed risk: mean reversion
+python3.12 scripts/run_backtest.py --mode compare --strategy mean_reversion
+
+# Compare baseline vs managed risk: both strategies together
+python3.12 scripts/run_backtest.py --mode compare --strategy both
+
+# Optimize on train split, then evaluate held-out test split
+python3.12 scripts/run_backtest.py --mode optimize --strategy momentum
+python3.12 scripts/run_backtest.py --mode optimize --strategy mean_reversion
+
+# Walk-forward validation
+python3.12 scripts/run_backtest.py --mode walk-forward --strategy momentum
+python3.12 scripts/run_backtest.py --mode walk-forward --strategy mean_reversion
+
+# Example with explicit config path
+python3.12 scripts/run_backtest.py --config config/settings.yaml --mode backtest --strategy momentum
+
+# Example with explicit log level
+python3.12 scripts/run_backtest.py --mode compare --strategy both --log-level DEBUG
+```
+
+`--strategy both` is documented as supported for `backtest` and `compare` only. Although the CLI parser accepts `both` for `optimize` and `walk-forward`, the current optimization and validation internals are built around single-strategy parameter spaces and are not documented here as supported combinations.
+
+### `scripts/run_live.py`
+
+```bash
+# Paper trading demo ticks
+python3.12 scripts/run_live.py --mode paper --demo
+
+# Paper trading with dry-run order generation only
+python3.12 scripts/run_live.py --mode paper --dry-run --symbols RELIANCE.NS TCS.NS
+
+# Paper trading using scheduler market hours
+python3.12 scripts/run_live.py --mode paper --scheduler-mode market_hours --symbols RELIANCE.NS TCS.NS
+
+# Paper trading using scheduler always mode
+python3.12 scripts/run_live.py --mode paper --scheduler-mode always --symbols RELIANCE.NS TCS.NS
+
+# Dhan live mode with explicit symbols
+python3.12 scripts/run_live.py --mode dhan --symbols RELIANCE.NS TCS.NS
+```
+
+Live execution currently supports `--strategy momentum` only.
+
+### Supporting Commands
+
+```bash
+# Streamlit control console
+streamlit run ui/app.py
+
+# Test suite with coverage
+pytest tests/ -v --cov=cpat
 ```
 
 **Output files** (saved to `data/results/`):
