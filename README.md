@@ -10,6 +10,13 @@ A **production-grade, event-driven multi-asset algorithmic trading system** for 
 
 ---
 
+## Project Docs
+
+- [Presentation guide](docs/CPAT_PROJECT_PRESENTATION_GUIDE.md)
+- [Execution flow](docs/CPAT_EXECUTION_FLOW.md)
+
+---
+
 ## Architecture
 
 ```
