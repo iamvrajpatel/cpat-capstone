@@ -54,6 +54,5 @@ credentials.json
 
 # Jupyter (we don't use notebooks — keeping just in case)
 .ipynb_checkpoints/
-docs
 iiqf-logo.png
 result
