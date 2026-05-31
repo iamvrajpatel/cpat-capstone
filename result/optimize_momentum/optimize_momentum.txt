@@ -1,0 +1,14 @@
+ Assessment:       ROBUST — strong OOS generalisation
+  IS  Sharpe:       0.802
+  OOS Sharpe:       0.993
+  Degradation:      1.238
+
+── Parameter Sensitivity ─────────────────────────────────────────
+         param_name    mean    std     cv  is_stable
+      lookback_long -0.3292 0.2774 0.8427      False
+   skip_most_recent -0.3138 0.0966 0.3078      False
+          top_n_pct -0.3186 0.0730 0.2291       True
+     lookback_short -0.3116 0.0615 0.1973       True
+rebalance_frequency -0.3164 0.0183 0.0580       True
+
+Optimization results saved → data/results/optimization_momentum.csv

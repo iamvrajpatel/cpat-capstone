@@ -1,0 +1,51 @@
+============================================================
+  CPAT Performance Report
+============================================================
+  Total Return:          -4.47%
+  Ann. Return:           -0.18%
+  Ann. Volatility:       16.52%
+  Sharpe Ratio:          -0.323
+  Sortino Ratio:         -0.605
+  Calmar Ratio:          -0.007
+  Ulcer Index:           10.159
+  Recovery Factor:       -0.182
+  Max Drawdown:          -24.59%
+  Max DD Duration:       7027 days
+  Win Rate:              55.6%
+  Profit Factor:         0.95
+  Expectancy:            -677.20
+  Skewness:              +6.389
+  Kurtosis (excess):     +459.029
+  Tail Ratio:             1.014
+  Total Trades:          559
+  Profitable Trades:     311
+  Avg Win:                +21713.67
+  Avg Loss:               -28756.07
+  Initial Capital:           10,000,000
+  Final Equity:               9,552,540
+============================================================
+
+
+── Top Drawdown Periods ───────────────────────────────────────
+ peak_date trough_date recovery_date  depth_pct  underwater_bars  recovery_bars  duration_bars  is_recovered
+2005-01-25  2005-01-26    2005-01-28    -24.586                1              2              3          True
+2005-01-13  2005-01-21    2005-01-25    -24.472                6              2              8          True
+2005-10-04  2008-03-06           NaN    -24.081              629              0           4985         False
+2001-06-26  2001-07-04    2004-03-26     -8.919                6            712            718          True
+2001-02-28  2001-04-13    2001-04-18     -6.080               32              3             35          True
+
+==================================================
+  Return Distribution (6485 observations)
+==================================================
+  Mean (daily):     +0.0046%
+  Std  (daily):     1.0409%
+  Skewness:         +6.389  
+  Kurtosis (excess):+459.029  ← fat tails ⚠
+  VaR (95%):        -0.092%
+  CVaR (95%):       -1.070%
+  Tail Ratio:       1.014
+  Normality:        ✗ Non-Normal (JB p=0.0000)
+==================================================
+
+
+Equity curve saved → data/results/equity_curve_mean_reversion.csv

@@ -1,0 +1,6 @@
+── Baseline vs Managed Comparison ───────────────────────────────
+    mode  final_equity  total_return  sharpe  max_drawdown  ulcer_index  risk_rejects  stop_triggers  max_gross_exposure
+baseline    8749681.49     -0.125032 -0.2887     -0.328352      12.8100          2459              0          5337984.37
+ managed    9552540.11     -0.044746 -0.3233     -0.245856      10.1591          2552            215          6919419.68
+
+Comparison saved → data/results/comparison_mean_reversion.csv
